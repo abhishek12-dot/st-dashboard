@@ -244,12 +244,14 @@ with tab_eod:
 # ═══════════════════════════════════════════════
 with tab_pend:
     st.subheader("Pendency Report")
-    st.caption("Operational pending states by store (Excel PENDENCY REPORT logic) + Rider metrics")
+    st.caption("Operational pending states by store (Excel PENDENCY REPORT logic) + Rider metrics. This shows only open / pending orders — not full daily volume.")
     
-    # Reorder columns to put Rider Count near front (only use columns that exist)
-    preferred = ["Store", "Rider Count", "Avg Order/Rider"]
-    pend_cols = preferred + [c for c in pendency.columns if c not in preferred]
-    pend_cols = [c for c in pend_cols if c in pendency.columns]
+    # Reorder columns — Store always first
+    preferred = ["Store", "Rider Count", "Avg Order/Rider", "Total Operational Pending",
+                 "Attempted Delivery", "Not Dispatched", "0 Attempt", "Picked Up", "Intransit", "Cancelled", "0-Attempt %"]
+    pend_cols = [c for c in preferred if c in pendency.columns]
+    # add any remaining columns
+    pend_cols += [c for c in pendency.columns if c not in pend_cols]
     st.dataframe(pendency[pend_cols], use_container_width=True, hide_index=True)
     
     st.markdown("#### Pending Breakdown")
@@ -263,7 +265,7 @@ with tab_pend:
 # ═══════════════════════════════════════════════
 with tab_breach:
     st.subheader("Breach Report")
-    st.caption("Delivered vs Breach by model (Excel BREACH REPORT logic) + Rider Count")
+    st.caption("Delivered vs Breach by model (Excel BREACH REPORT logic) + Rider Count.  'Total Orders' = full daily volume (created today + delivered today + still open). This is different from Pendency Total Orders.")
     
     # Put Rider Count and Breach % in nice order
     breach_display_cols = [c for c in [
@@ -277,6 +279,8 @@ with tab_breach:
         st.dataframe(breach[breach_display_cols], use_container_width=True, hide_index=True)
     else:
         st.dataframe(breach, use_container_width=True, hide_index=True)
+    
+    st.info("Note: Breach Report 'Total Orders' is the full daily set. Excel Pendency 'Total Orders' is only the current open/pending orders. Both are correct for their purpose — numbers will differ.")
     
     c1, c2 = st.columns(2)
     

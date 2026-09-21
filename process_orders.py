@@ -67,8 +67,8 @@ def apply_date_filters(df: pd.DataFrame, report_date: datetime = None, mode: str
     Apply the handwritten date filtering logic.
     
     mode="all"     → keep full history (useful for sample / historical analysis)
-    mode="daily"   → keep only report_date created orders + still-open orders
-                     (matches the daily operating SOP)
+    mode="daily"   → keep only orders whose promised drop_time falls on report_date
+                     (excludes next-day / future SDD and previous-day leftovers from Total Orders & Pendency)
     """
     df = df.copy()
     
@@ -89,20 +89,32 @@ def apply_date_filters(df: pd.DataFrame, report_date: datetime = None, mode: str
     # Ensure today is a normalized Timestamp
     today = pd.Timestamp(report_date).normalize()
     
-    # Keep:
-    # 1. Orders created on report date
-    # 2. Orders delivered (ADT) on report date
-    # 3. Still-open operational orders
-    mask_today_or_open = (
-        (df["Creation Date"].dt.normalize() == today) |
-        (df["ADT(Actual Delivery Time)"].dt.normalize() == today) |
-        (df["Status"].isin(["pending", "fulfilled"])) |
-        (df["Fulfillment Status"].isin([
-            "CREATED", "OUT_FOR_DELIVERY", "PICKED_UP",
-            "REACHED_PICKUP", "REACHED_DELIVERY", "UNDELIVERED", "IN_TRANSIT"
-        ]))
+    # Extract drop_time from Notes early so we can filter strictly by promised day
+    if "Notes" in df.columns:
+        parsed = df["Notes"].apply(parse_notes_timestamps)
+        df["_drop_time_tmp"] = [p[1] for p in parsed]
+    else:
+        df["_drop_time_tmp"] = pd.NaT
+    
+    # Keep ONLY orders whose promised drop_time is on the report date.
+    # This excludes:
+    #   - future SDD / scheduled orders (drop_time next day or later)
+    #   - previous-day undelivered leftovers
+    #   - historical completed deliveries whose Notes still carry a future drop_time
+    mask_drop_today = df["_drop_time_tmp"].dt.normalize() == today
+    # Exclude already-delivered orders whose ADT is NOT on the report date
+    has_adt = df["ADT(Actual Delivery Time)"].notna()
+    adt_not_today = has_adt & (df["ADT(Actual Delivery Time)"].dt.normalize() != today)
+    mask_drop_today = mask_drop_today & ~adt_not_today
+    # Fallback for rows missing Notes/drop_time: still keep created-today or delivered-today
+    mask_fallback = (
+        df["_drop_time_tmp"].isna() &
+        (
+            (df["Creation Date"].dt.normalize() == today) |
+            (df["ADT(Actual Delivery Time)"].dt.normalize() == today)
+        )
     )
-    df = df[mask_today_or_open].copy()
+    df = df[mask_drop_today | mask_fallback].copy()
     
     # Cancelled previous date
     if "Cancellation Date" in df.columns and "Status" in df.columns:
@@ -112,6 +124,9 @@ def apply_date_filters(df: pd.DataFrame, report_date: datetime = None, mode: str
             (df["Cancellation Date"].dt.normalize() < today)
         )
         df = df[~cancelled_prev]
+    
+    # Clean temporary column
+    df = df.drop(columns=["_drop_time_tmp"], errors="ignore")
     
     return df.reset_index(drop=True)
 
